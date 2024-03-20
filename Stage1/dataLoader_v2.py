@@ -55,9 +55,23 @@ class train_loader(Dataset):
         while augtype1 == augtype2:
             augtype2 = random.randint(7, 11)
         audio_aug = []
-        audio_aug.append(self.random_aug(augtype1, audio_1, sr))
-        # audio_aug.append(self.random_aug(augtype1, audio, sr))
-        audio_aug.append(self.random_aug(augtype2, audio_2, sr))
+        audio_1 = self.random_aug(augtype1, audio_1, sr)
+        audio_2 = self.random_aug(augtype2, audio_2, sr)
+
+        snr = [random.uniform(13,20)]
+        p = random.random()
+        if p < 0.3:  # audio_1 only
+            a_1 = audio_cross(audio_1, audio_2, snr)
+            a_2 = audio_2
+        elif p < 0.6:  # audio_2 only
+            a_2 = audio_cross(audio_2, audio_1, snr)
+            a_1 = audio_1
+        else:  # Add both
+            a_1 = audio_cross(audio_1, audio_2, snr)
+            a_2 = audio_cross(audio_2, audio_1, snr)
+
+        audio_aug.append(a_1)
+        audio_aug.append(a_2)
         audio_aug = numpy.concatenate(audio_aug, axis=0)  # Concate and return
         # return torch.FloatTensor(audio_aug), self.data_label[index]
         return torch.FloatTensor(audio_aug), self.data_label[index]
@@ -140,19 +154,19 @@ class train_loader(Dataset):
         audio[0:minlen] = tmp[0:minlen]
         return audio.reshape(1, audio.shape[0])
 
-    def augment_wav(self, audio, augment):
-        if augment['rir_filt'] is not None:
-            rir = numpy.multiply(augment['rir_filt'], pow(10, 0.1 * augment['rir_gain']))
-            audio = signal.convolve(audio, rir, mode='full')[:len(audio)]
-        if augment['add_noise'] is not None:
-            noiseaudio = loadWAV(augment['add_noise'], self.max_frames).astype(numpy.float)
-            noise_db = 10 * numpy.log10(numpy.mean(noiseaudio[0] ** 2) + 1e-4)
-            clean_db = 10 * numpy.log10(numpy.mean(audio ** 2) + 1e-4)
-            noise = numpy.sqrt(10 ** ((clean_db - noise_db - augment['add_snr']) / 10)) * noiseaudio
-            audio = audio + noise
-        else:
-            audio = numpy.expand_dims(audio, 0)
-        return audio
+    # def augment_wav(self, audio, augment):
+    #     if augment['rir_filt'] is not None:
+    #         rir = numpy.multiply(augment['rir_filt'], pow(10, 0.1 * augment['rir_gain']))
+    #         audio = signal.convolve(audio, rir, mode='full')[:len(audio)]
+    #     if augment['add_noise'] is not None:
+    #         noiseaudio = loadWAV(augment['add_noise'], self.max_frames).astype(numpy.float)
+    #         noise_db = 10 * numpy.log10(numpy.mean(noiseaudio[0] ** 2) + 1e-4)
+    #         clean_db = 10 * numpy.log10(numpy.mean(audio ** 2) + 1e-4)
+    #         noise = numpy.sqrt(10 ** ((clean_db - noise_db - augment['add_snr']) / 10)) * noiseaudio
+    #         audio = audio + noise
+    #     else:
+    #         audio = numpy.expand_dims(audio, 0)
+    #     return audio
 
 
 class test_loader(Dataset):
@@ -196,6 +210,13 @@ class test_loader(Dataset):
     def __len__(self):
         return len(self.data_list)
 
+def audio_cross(audio_1, audio_2, snr):
+    noise_db = 10 * numpy.log10(numpy.mean(audio_2 ** 2) + 1e-4)
+    clean_db = 10 * numpy.log10(numpy.mean(audio_1 ** 2) + 1e-4)
+    noise = numpy.sqrt(10 ** ((clean_db - noise_db - snr) / 10)) * audio_2
+    audio = audio_1 + noise
+
+    return audio
 
 def loadWAV(filename, max_frames):
     max_audio = max_frames * 160 + 240  # 240 is for padding, for 15ms since window is 25ms and step is 10ms.
