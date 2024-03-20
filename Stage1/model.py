@@ -18,7 +18,7 @@ class model(nn.Module):
         self.OptimNet = torch.optim.Adam(list(self.Network.parameters()) + list(self.Loss.parameters()), lr = lr)
         self.OptimAAT = torch.optim.Adam(self.AATNet.parameters(), lr = lr)
         #self.Scheduler = torch.optim.lr_scheduler.StepLR(self.OptimNet, step_size = 5, gamma=lr_decay)
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer=self.OptimNet, milestones=[30, 40], gamma=lr_decay)
+        self.Sscheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer=self.OptimNet, milestones=[40, 60], gamma=lr_decay)
         print("Model para number = %.2f"%(sum(param.numel() for param in self.Network.parameters()) / 1024 / 1024))
 
     def train_network(self, loader, epoch):
