@@ -2,16 +2,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import numpy, tqdm, sys, time, soundfile
+import numpy, tqdm, sys, time, soundfile, random
 
 from loss import *
 from encoder import *
 from tools import *
+import librosa
 
 class model(nn.Module):
-    def __init__(self, lr, lr_decay, **kwargs):
+    def __init__(self, lr, lr_decay, label_num, **kwargs):
         super(model, self).__init__()
-        self.Network = ECAPA_TDNN().cuda() # Speaker encoder
+        self.Network = ECAPA_TDNN(label_num).cuda() # Speaker encoder
         self.Loss = LossFunction().cuda() # Contrastive loss
         self.AATNet  = AATNet().cuda() # AAT, which is used to improve the performace
         self.Reverse = Reverse().cuda() # AAT
@@ -27,66 +28,109 @@ class model(nn.Module):
         loss, top1 = 0, 0
         lr = self.OptimNet.param_groups[0]['lr'] # Read the current learning rate
         criterion   = torch.nn.CrossEntropyLoss() # Use for AAT
-        AAT_labels = torch.LongTensor([1]*loader.batch_size+[0]*loader.batch_size).cuda() # AAT labels
+        # AAT_labels = torch.LongTensor([1]*loader.batch_size+[0]*loader.batch_size).cuda() # AAT labels
         tstart = time.time() # Used to monitor the training speed
-        for counter, data in enumerate(loader, start = 1):     
+        for counter, (data, label) in enumerate(loader, start = 1):
             data = data.transpose(0,1)
-            feat = []
+            feat,res_label = [],[]
             for inp in data:
-                feat.append(self.Network.forward(torch.FloatTensor(inp).cuda())) # Feed the segments to get the speaker embeddings
+                x_em, x_clas = self.Network.forward(torch.FloatTensor(inp).cuda())
+                # feat.append(self.Network.forward(torch.FloatTensor(inp).cuda())) # Feed the segments to get the speaker embeddings
+                feat.append(x_em)
+                res_label.append(x_clas)
             feat = torch.stack(feat,dim=1).squeeze()
-            self.zero_grad()
+            res_label = torch.stack(res_label, dim=1).squeeze()
+            #self.zero_grad()
             # Train discriminator
-            out_a, out_s, out_p = feat[:,0,:].detach(), feat[:,1,:].detach(), feat[:,2,:].detach()
-            in_AAT = torch.cat((torch.cat((out_a,out_s),1),torch.cat((out_a,out_p),1)),0)
-            out_AAT = self.AATNet(in_AAT)
-            dloss  = criterion(out_AAT, AAT_labels)
-            dloss.backward()
-            self.OptimAAT.step()
+            # out_a, out_s, out_p = feat[:,0,:].detach(), feat[:,1,:].detach(), feat[:,2,:].detach()
+            # in_AAT = torch.cat((torch.cat((out_a,out_s),1),torch.cat((out_a,out_p),1)),0)
+            # out_AAT = self.AATNet(in_AAT)
+            # dloss  = criterion(out_AAT, AAT_labels)
+            # dloss.backward()
+            # self.OptimAAT.step()
             # Train model
             self.zero_grad()
-            in_AAT = torch.cat((torch.cat((feat[:,0,:],feat[:,1,:]),1),torch.cat((feat[:,0,:],feat[:,2,:]),1)),0)
-            out_AAT = self.AATNet(self.Reverse(in_AAT))
-            closs   = criterion(out_AAT, AAT_labels) # AAT loss
-            sloss, prec1 = self.Loss.forward(feat[:,[0,2],:])  # speaker loss              
-            nloss = sloss + closs * 3 # Total loss
+            # in_AAT = torch.cat((torch.cat((feat[:,0,:],feat[:,1,:]),1),torch.cat((feat[:,0,:],feat[:,2,:]),1)),0)
+            # out_AAT = self.AATNet(self.Reverse(in_AAT))
+            # closs   = criterion(out_AAT, AAT_labels) # AAT loss
+
+            # print(res_label)
+            # print(torch.cat(torch.unbind(res_label, dim=1), dim=0))
+            # print(label)
+            # print(label.repeat(1,res_label.shape[1]))
+            # print(torch.argmax(res_label, dim=1))
+
+            label = label.repeat(1,res_label.shape[1]).squeeze().cuda()
+            res_label = torch.cat(torch.unbind(res_label, dim=1), dim=0)
+
+            closs = criterion(res_label, label)
+            sloss = self.Loss.forward(feat[:,[0,1],:])  # speaker loss
+            #nloss = sloss + closs * 3 # Total loss
+            nloss = sloss * 3 + closs  # Total loss
             loss    += nloss.detach().cpu()
-            top1    += prec1 # Training acc
+
             nloss.backward()
-            self.OptimNet.step() 
+            self.OptimNet.step()
+            prec1 = accuracy_sup(res_label, label)
+            top1 += prec1  # Training acc
             time_used = time.time() - tstart # Time for this epoch
-            sys.stdout.write("[%2d] Lr: %5f, %.2f%% (est %.1f mins) Loss %f EER/TAcc %2.3f%% \r"%(epoch, lr, 100 * (counter / loader.__len__()), time_used * loader.__len__() / counter / 60, loss/counter, top1/counter))
+            sys.stdout.write("[%2d] Lr: %5f, %.2f%% (est %.1f mins) cLoss %2.2f sLoss %2.2f Loss %f EER/TAcc %2.3f%% \r"%(epoch, lr, 100 * (counter / loader.__len__()), time_used * loader.__len__() / counter / 60, closs.detach().cpu() , sloss.detach().cpu(), loss/counter, top1/counter))
             sys.stdout.flush()
         sys.stdout.write("\n")
         return loss/counter, top1/counter, lr
 
-    def evaluate_network(self, val_list, val_path, **kwargs):
+    def evaluate_network(self, loader):
         self.eval()
-        files, feats = [], {}
-        for line in open(val_list).read().splitlines():
-            data = line.split()
-            files.append(data[1])
-            files.append(data[2])
-        setfiles = list(set(files))
-        setfiles.sort()  # Read the list of wav files
-        for idx, file in tqdm.tqdm(enumerate(setfiles), total = len(setfiles)):
-            audio, _ = soundfile.read(os.path.join(val_path, file))
-            feat = torch.FloatTensor(numpy.stack([audio], axis=0)).cuda()
-            with torch.no_grad():
-                ref_feat = self.Network.forward(feat).detach().cpu()
-            feats[file]     = ref_feat # Extract features for each data, get the feature dict
-        scores, labels  = [], []
-        for line in open(val_list).read().splitlines():
-            data = line.split()
-            ref_feat = F.normalize(feats[data[1]].cuda(), p=2, dim=1) # feature 1
-            com_feat = F.normalize(feats[data[2]].cuda(), p=2, dim=1) # feature 2
-            score = numpy.mean(torch.matmul(ref_feat, com_feat.T).detach().cpu().numpy()) # Get the score
-            scores.append(score)
-            labels.append(int(data[0]))
-        EER = tuneThresholdfromScore(scores, labels, [1, 0.1])[1]
-        fnrs, fprs, thresholds = ComputeErrorRates(scores, labels)
-        minDCF, _ = ComputeMinDcf(fnrs, fprs, thresholds, 0.05, 1, 1)
-        return EER, minDCF
+        loss, top1 = 0, 0
+        criterion = torch.nn.CrossEntropyLoss()  # Use for AAT
+        with torch.no_grad():
+            for counter, (data, label) in enumerate(loader, start=1):
+                data = data.transpose(0, 1)
+                res_label = []
+                for inp in data:
+                    _, x_clas = self.Network.forward(torch.FloatTensor(inp).cuda())
+                    res_label.append(x_clas)
+                res_label = torch.stack(res_label, dim=1).squeeze()
+
+                label = label.repeat(1, res_label.shape[1]).squeeze().cuda()
+                res_label = torch.cat(torch.unbind(res_label, dim=1), dim=0)
+                prec1 = accuracy_sup(res_label, label)
+                top1 += prec1
+
+                closs = criterion(res_label, label)
+                loss += closs.detach().cpu().numpy()
+
+        return loss / counter, top1 / counter
+
+
+
+    # def evaluate_network(self, val_list, val_path, **kwargs):
+    #     self.eval()
+    #     files, feats = [], {}
+    #     for line in open(val_list).read().splitlines():
+    #         data = line.split()
+    #         files.append(data[1])
+    #         files.append(data[2])
+    #     setfiles = list(set(files))
+    #     setfiles.sort()  # Read the list of wav files
+    #     for idx, file in tqdm.tqdm(enumerate(setfiles), total = len(setfiles)):
+    #         audio, _ = soundfile.read(os.path.join(val_path, file))
+    #         feat = torch.FloatTensor(numpy.stack([audio], axis=0)).cuda()
+    #         with torch.no_grad():
+    #             ref_feat = self.Network.forward(feat).detach().cpu()
+    #         feats[file]     = ref_feat # Extract features for each data, get the feature dict
+    #     scores, labels  = [], []
+    #     for line in open(val_list).read().splitlines():
+    #         data = line.split()
+    #         ref_feat = F.normalize(feats[data[1]].cuda(), p=2, dim=1) # feature 1
+    #         com_feat = F.normalize(feats[data[2]].cuda(), p=2, dim=1) # feature 2
+    #         score = numpy.mean(torch.matmul(ref_feat, com_feat.T).detach().cpu().numpy()) # Get the score
+    #         scores.append(score)
+    #         labels.append(int(data[0]))
+    #     EER = tuneThresholdfromScore(scores, labels, [1, 0.1])[1]
+    #     fnrs, fprs, thresholds = ComputeErrorRates(scores, labels)
+    #     minDCF, _ = ComputeMinDcf(fnrs, fprs, thresholds, 0.05, 1, 1)
+    #     return EER, minDCF
 
     def save_network(self, path): # Save the model
         torch.save(self.state_dict(), path)

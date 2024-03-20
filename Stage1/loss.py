@@ -18,7 +18,7 @@ class LossFunction(nn.Module):
         feature = torch.cat(torch.unbind(features, dim=1), dim=0)
         dot_feature  = F.cosine_similarity(feature.unsqueeze(-1),feature.unsqueeze(-1).transpose(0,2))
         torch.clamp(self.w, 1e-6)
-        dot_feature = dot_feature * self.w + self.b # We add this from angle protocol loss. 
+        #dot_feature = dot_feature * self.w + self.b # We add this from angle protocol loss.
         logits_max, _ = torch.max(dot_feature, dim=1, keepdim=True)
         logits = dot_feature - logits_max.detach()
         mask = mask.repeat(count, count)
@@ -33,9 +33,9 @@ class LossFunction(nn.Module):
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
         loss = -(mask * log_prob).sum(1) / mask.sum(1)
         loss = loss.view(count, batch_size).mean()
-        n         = batch_size * 2
-        label     = torch.from_numpy(numpy.asarray(list(range(batch_size - 1,batch_size*2 - 1)) + list(range(0,batch_size)))).cuda()
-        logits    = logits.flatten()[1:].view(n-1, n+1)[:,:-1].reshape(n, n-1)
-        prec1, _  = accuracy(logits.detach().cpu(), label.detach().cpu(), topk=(1, 2)) # Compute the training acc
+        #n         = batch_size * 2
+        #label     = torch.from_numpy(numpy.asarray(list(range(batch_size - 1,batch_size*2 - 1)) + list(range(0,batch_size)))).cuda()
+        #logits    = logits.flatten()[1:].view(n-1, n+1)[:,:-1].reshape(n, n-1)
+        #prec1, _  = accuracy(logits.detach().cpu(), label.detach().cpu(), topk=(1, 2)) # Compute the training acc
         
-        return loss, prec1
+        return loss

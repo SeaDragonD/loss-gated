@@ -84,7 +84,7 @@ class PreEmphasis(torch.nn.Module):
         return F.conv1d(input, self.flipped_filter).squeeze(1)
 
 class ECAPA_TDNN(nn.Module): # Here we use a small ECAPA-TDNN, C=512. In my experiences, C=1024 slightly improves the performance but need more training time.
-    def __init__(self, C = 512, **kwargs):
+    def __init__(self, label_num, C = 1024, **kwargs):
         super(ECAPA_TDNN, self).__init__()
         self.conv1  = nn.Conv1d(80, C, kernel_size=5, stride=1, padding=2)
         self.relu   = nn.ReLU()
@@ -108,11 +108,15 @@ class ECAPA_TDNN(nn.Module): # Here we use a small ECAPA-TDNN, C=512. In my expe
         self.bn5 = nn.BatchNorm1d(3072)
         self.fc6 = nn.Linear(3072, 192)
         self.bn6 = nn.BatchNorm1d(192)
+        self.fc7 = nn.Linear(192, 32)
+        self.bn7 = nn.BatchNorm1d(32)
+        self.fc8 = nn.Linear(32, label_num)
+        self.bn8 = nn.BatchNorm1d(label_num)
 
     def forward(self, x):
         with torch.no_grad():
             x = self.torchfbank(x)+1e-6
-            x = x.log()   
+            x = x.log()
             x = x - torch.mean(x, dim=-1, keepdim=True)
         x = self.conv1(x)
         x = self.relu(x)
@@ -130,8 +134,12 @@ class ECAPA_TDNN(nn.Module): # Here we use a small ECAPA-TDNN, C=512. In my expe
         x = torch.cat((mu,sg),1)
         x = self.bn5(x)
         x = self.fc6(x)
-        x = self.bn6(x)
-        return x
+        x_em = self.bn6(x)
+        x = self.fc7(x_em)
+        x = self.bn7(x)
+        x = self.fc8(x)
+        x_clas = self.bn8(x)
+        return x_em, x_clas
 
 from pytorch_revgrad import RevGrad
 
