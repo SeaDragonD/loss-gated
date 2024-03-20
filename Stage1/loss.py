@@ -18,7 +18,7 @@ class LossFunction(nn.Module):
         feature = torch.cat(torch.unbind(features, dim=1), dim=0)
         dot_feature  = F.cosine_similarity(feature.unsqueeze(-1),feature.unsqueeze(-1).transpose(0,2))
         torch.clamp(self.w, 1e-6)
-        dot_feature = dot_feature * self.w + self.b # We add this from angle protocol loss. 
+        #dot_feature = dot_feature * self.w + self.b # We add this from angle protocol loss.
         logits_max, _ = torch.max(dot_feature, dim=1, keepdim=True)
         logits = dot_feature - logits_max.detach()
         mask = mask.repeat(count, count)

@@ -6,20 +6,22 @@ from scipy import signal
 import librosa
 import numpy as np
 
+
 class train_loader(Dataset):
     def __init__(self, max_frames, train_list, train_path, musan_path, num_frames, sample_rate, **kwargs):
         self.max_frames = max_frames
         self.num_frames = num_frames
         self.sample_rate = sample_rate
-        self.noisetypes = ['noise','speech','music'] # Type of noise
-        self.noisesnr = {'noise':[0,15],'speech':[13,20],'music':[5,15]} # The range of SNR
-        self.noiselist = {} 
-        augment_files   = glob.glob(os.path.join(musan_path,'*/*/*/*.wav')) # All noise files in list
+        self.train_path = train_path
+        self.noisetypes = ['noise', 'speech', 'music']  # Type of noise
+        self.noisesnr = {'noise': [0, 15], 'speech': [13, 20], 'music': [5, 15]}  # The range of SNR
+        self.noiselist = {}
+        augment_files = glob.glob(os.path.join(musan_path, '*/*/*/*.wav'))  # All noise files in list
         for file in augment_files:
             if not file.split('/')[-4] in self.noiselist:
                 self.noiselist[file.split('/')[-4]] = []
-            self.noiselist[file.split('/')[-4]].append(file) # All noise files in dic
-        self.rir_files = numpy.load('rir.npy') # Load the rir file
+            self.noiselist[file.split('/')[-4]].append(file)  # All noise files in dic
+        self.rir_files = numpy.load('rir.npy')  # Load the rir file
         # Load data & labels
         self.data_list = []
         self.data_label = []
@@ -29,54 +31,36 @@ class train_loader(Dataset):
         dictkeys = {key: ii for ii, key in enumerate(dictkeys)}
         for index, line in enumerate(lines):
             speaker_label = dictkeys[line.split()[0]]
-            file_name = os.path.join(train_path, line.split()[1])
+            #file_name = os.path.join(train_path, line.split()[1])
             self.data_label.append(speaker_label)
-            self.data_list.append(file_name)
-                
+            self.data_list.append(line)
+
     def __getitem__(self, index):
         # Read the utterance and randomly select the segment
-        audio, sr = librosa.load(self.data_list[index], sr=self.sample_rate)
-        length = self.num_frames * (int(sr / 100)) + 240  # TODO 后续考虑设置长度为固定的3S
-        audiosize = audio.shape[0]
-        if audio.shape[0] <= length:
-            shortage = length - audio.shape[0]
-            audio = numpy.pad(audio, (0, shortage), 'wrap')
-        randsize = audiosize - (length * 2)   # Select two segments
-        startframe = random.sample(range(0, randsize), 2)
-        startframe.sort()
-        startframe[1] += length  # Non-overlapped two segments
-        startframe = numpy.array(startframe)
-        numpy.random.shuffle(startframe)
-        feats = []
-        for asf in startframe:  # Startframe[0] means the 1st segment, Startframe[1] means the 2nd segment
-            feats.append(audio[int(asf):int(asf) + length])
-        audio_1 = feats[0]
-        audio_2 = feats[1]
-        #Audios = numpy.stack(feats, axis=0)
-        audio_1 = numpy.stack([audio_1], axis=0).astype(np.float)
-        audio_2 = numpy.stack([audio_2], axis=0).astype(np.float)
+        ls = self.data_list[index].split()
+        audio_1, sr = librosa.load(os.path.join(self.train_path, ls[1]), sr=self.sample_rate)
+        audio_2, sr = librosa.load(os.path.join(self.train_path, ls[2]), sr=self.sample_rate)
 
-        # start_frame = numpy.int64(random.random() * (audio.shape[0] - length))
-        # audio = audio[start_frame:start_frame + length]
-        # audio = numpy.stack([audio], axis=0).astype(np.float)  # TODO 这里的stack什么意思？
+        # min_length = min(audio_1.shape[0], audio_2.shape[0])
+        # print('min_length:',min_length)
+        # audio_1 = audio_1[:min_length]
+        # audio_2 = audio_2[:min_length]
+
+        audio_1 = numpy.stack([audio_1], axis=0).astype(np.float)  # TODO 这里的stack什么意思？
+        audio_2 = numpy.stack([audio_2], axis=0).astype(np.float)
         # Data Augmentation
 
         augtype1 = random.randint(7, 11)  # 不进行数据增强
         augtype2 = random.randint(7, 11)  # 不进行数据增强
         while augtype1 == augtype2:
-            augtype2 = random.randint(7, 11)  # 不进行数据增强
+            augtype2 = random.randint(7, 11)
         audio_aug = []
         audio_aug.append(self.random_aug(augtype1, audio_1, sr))
-        audio_aug.append(self.random_aug(augtype1, audio_2, sr))
+        # audio_aug.append(self.random_aug(augtype1, audio, sr))
         audio_aug.append(self.random_aug(augtype2, audio_2, sr))
-        # print(audio_aug[0].shape)
-        # print(audio_aug[1].shape)
-        # print(audio_aug[2].shape)
-        # print('augtype2:',augtype2)
-        # print("=====")
         audio_aug = numpy.concatenate(audio_aug, axis=0)  # Concate and return
-        #return torch.FloatTensor(audio_aug), self.data_label[index]
-        return torch.FloatTensor(audio_aug)
+        # return torch.FloatTensor(audio_aug), self.data_label[index]
+        return torch.FloatTensor(audio_aug), self.data_label[index]
 
     def __len__(self):
         return len(self.data_list)
@@ -95,21 +79,21 @@ class train_loader(Dataset):
 
         elif augtype == 4:  # Reverberation
             audio = self.add_rev(audio, sr)
-        elif augtype == 6:  # Noise
+        elif augtype == 5:  # Noise
             audio = self.add_noise(audio, 'noise')
         elif augtype == 7:
             audio = self.noise(audio)
         elif augtype == 8:
             audio = self.shift(audio)
-        #elif augtype == 8:
-        #    audio = self.stretch(audio, sr, rate=0.8)
+        # elif augtype == 8:
+        #     audio = self.stretch(audio, sr, rate=0.8)
         elif augtype == 9:
             audio = self.pitch(audio, sr)
         elif augtype == 10:
             audio = self.dyn_change(audio)
         elif augtype == 11:
             audio = self.speedNpitch(audio)
-        return  audio
+        return audio
 
     # （6）添加白噪声
     def noise(self, audio):
@@ -156,14 +140,14 @@ class train_loader(Dataset):
         audio[0:minlen] = tmp[0:minlen]
         return audio.reshape(1, audio.shape[0])
 
-    def augment_wav(self,audio,augment):
+    def augment_wav(self, audio, augment):
         if augment['rir_filt'] is not None:
-            rir     = numpy.multiply(augment['rir_filt'], pow(10, 0.1 * augment['rir_gain']))    
-            audio   = signal.convolve(audio, rir, mode='full')[:len(audio)]
+            rir = numpy.multiply(augment['rir_filt'], pow(10, 0.1 * augment['rir_gain']))
+            audio = signal.convolve(audio, rir, mode='full')[:len(audio)]
         if augment['add_noise'] is not None:
-            noiseaudio  = loadWAV(augment['add_noise'], self.max_frames).astype(numpy.float)
-            noise_db = 10 * numpy.log10(numpy.mean(noiseaudio[0] ** 2)+1e-4) 
-            clean_db = 10 * numpy.log10(numpy.mean(audio ** 2)+1e-4) 
+            noiseaudio = loadWAV(augment['add_noise'], self.max_frames).astype(numpy.float)
+            noise_db = 10 * numpy.log10(numpy.mean(noiseaudio[0] ** 2) + 1e-4)
+            clean_db = 10 * numpy.log10(numpy.mean(audio ** 2) + 1e-4)
             noise = numpy.sqrt(10 ** ((clean_db - noise_db - augment['add_snr']) / 10)) * noiseaudio
             audio = audio + noise
         else:
@@ -173,19 +157,10 @@ class train_loader(Dataset):
 
 class test_loader(Dataset):
     def __init__(self, max_frames, test_list, test_path, musan_path, num_frames, sample_rate, **kwargs):
-        self.max_frames = max_frames
-        self.num_frames = num_frames
-        self.sample_rate = sample_rate
-        self.noisetypes = ['noise', 'speech', 'music']  # Type of noise
-        self.noisesnr = {'noise': [0, 15], 'speech': [13, 20], 'music': [5, 15]}  # The range of SNR
-        self.noiselist = {}
-        augment_files = glob.glob(os.path.join(musan_path, '*/*/*/*.wav'))  # All noise files in list
-        for file in augment_files:
-            if not file.split('/')[-4] in self.noiselist:
-                self.noiselist[file.split('/')[-4]] = []
-            self.noiselist[file.split('/')[-4]].append(file)  # All noise files in dic
-        self.rir_files = numpy.load('rir.npy')  # Load the rir file
         # Load data & labels
+        self.sample_rate = sample_rate
+        self.num_frames = num_frames
+        self.test_path = test_path
         self.data_list = []
         self.data_label = []
         lines = open(test_list).read().splitlines()
@@ -194,72 +169,74 @@ class test_loader(Dataset):
         dictkeys = {key: ii for ii, key in enumerate(dictkeys)}
         for index, line in enumerate(lines):
             speaker_label = dictkeys[line.split()[0]]
-            file_name = os.path.join(test_path, line.split()[1])
+            #file_name = os.path.join(test_path, line.split()[1])
             self.data_label.append(speaker_label)
-            self.data_list.append(file_name)
+            self.data_list.append(line)
 
     def __getitem__(self, index):
         # Read the utterance and randomly select the segment
-        audio, sr = librosa.load(self.data_list[index], sr=self.sample_rate)
-        length = self.num_frames * (int(sr / 100)) + 240  # TODO 后续考虑设置长度为固定的3S
-        audiosize = audio.shape[0]
-        if audio.shape[0] <= length:
-            shortage = length - audio.shape[0]
-            audio = numpy.pad(audio, (0, shortage), 'wrap')
-        randsize = audiosize - (length * 2)  # Select two segments
-        startframe = random.sample(range(0, randsize), 2)
-        startframe.sort()
-        startframe[1] += length  # Non-overlapped two segments
-        startframe = numpy.array(startframe)
-        numpy.random.shuffle(startframe)
-        feats = []
-        for asf in startframe:  # Startframe[0] means the 1st segment, Startframe[1] means the 2nd segment
-            feats.append(audio[int(asf):int(asf) + length])
-        feats.append(feats[1])
-        Audios = numpy.stack(feats, axis=0)
+        ls = self.data_list[index].split()
+        audio_1, sr = librosa.load(os.path.join(self.test_path, ls[1]), sr=self.sample_rate)
+        audio_2, sr = librosa.load(os.path.join(self.test_path, ls[2]), sr=self.sample_rate)
 
-        return torch.FloatTensor(Audios)
+        audio_1 = numpy.stack([audio_1], axis=0).astype(np.float)  # TODO 这里的stack什么意思？
+        audio_2 = numpy.stack([audio_2], axis=0).astype(np.float)
+
+        min_length = min(audio_1.shape[0], audio_2.shape[0])
+        audio_1 = audio_1[:min_length]
+        audio_2 = audio_2[:min_length]
+
+        audio_aug = []
+        audio_aug.append(audio_1)
+        audio_aug.append(audio_2)
+        audio_aug = numpy.concatenate(audio_aug, axis=0)  # Concate and return
+        # return torch.FloatTensor(audio_aug), self.data_label[index]
+        return torch.FloatTensor(audio_aug), self.data_label[index]
 
     def __len__(self):
         return len(self.data_list)
 
 
 def loadWAV(filename, max_frames):
-    max_audio = max_frames * 160 + 240 # 240 is for padding, for 15ms since window is 25ms and step is 10ms.
+    max_audio = max_frames * 160 + 240  # 240 is for padding, for 15ms since window is 25ms and step is 10ms.
     audio, _ = soundfile.read(filename)
     audiosize = audio.shape[0]
-    if audiosize <= max_audio: # Padding if the length is not enough
-        shortage    = math.floor( ( max_audio - audiosize + 1 ) / 2 )
-        audio       = numpy.pad(audio, (shortage, shortage), 'wrap')
-        audiosize   = audio.shape[0]
-    startframe = numpy.int64(random.random()*(audiosize-max_audio)) # Randomly select a start frame to extract audio
-    feat = numpy.stack([audio[int(startframe):int(startframe)+max_audio]],axis=0)
+    if audiosize <= max_audio:  # Padding if the length is not enough
+        shortage = math.floor((max_audio - audiosize + 1) / 2)
+        audio = numpy.pad(audio, (shortage, shortage), 'wrap')
+        audiosize = audio.shape[0]
+    startframe = numpy.int64(
+        random.random() * (audiosize - max_audio))  # Randomly select a start frame to extract audio
+    feat = numpy.stack([audio[int(startframe):int(startframe) + max_audio]], axis=0)
     return feat
 
-def loadWAVSplit(filename, max_frames): # Load two segments
+
+def loadWAVSplit(filename, max_frames):  # Load two segments
     max_audio = max_frames * 160 + 240
     audio, _ = soundfile.read(filename)
     audiosize = audio.shape[0]
     if audiosize <= max_audio:
-        shortage    = math.floor( ( max_audio - audiosize) / 2 )
-        audio       = numpy.pad(audio, (shortage, shortage), 'wrap')
-        audiosize   = audio.shape[0]
-    randsize = audiosize - (max_audio*2) # Select two segments
+        shortage = math.floor((max_audio - audiosize) / 2)
+        audio = numpy.pad(audio, (shortage, shortage), 'wrap')
+        audiosize = audio.shape[0]
+    randsize = audiosize - (max_audio * 2)  # Select two segments
     startframe = random.sample(range(0, randsize), 2)
     startframe.sort()
-    startframe[1] += max_audio # Non-overlapped two segments
+    startframe[1] += max_audio  # Non-overlapped two segments
     startframe = numpy.array(startframe)
     numpy.random.shuffle(startframe)
     feats = []
-    for asf in startframe: # Startframe[0] means the 1st segment, Startframe[1] means the 2nd segment
-        feats.append(audio[int(asf):int(asf)+max_audio])
-    feat = numpy.stack(feats,axis=0)
+    for asf in startframe:  # Startframe[0] means the 1st segment, Startframe[1] means the 2nd segment
+        feats.append(audio[int(asf):int(asf) + max_audio])
+    feat = numpy.stack(feats, axis=0)
     return feat
+
 
 def worker_init_fn(worker_id):
     numpy.random.seed(numpy.random.get_state()[1][0] + worker_id)
 
-def get_loader(args): # Define the data loader
+
+def get_loader(args):  # Define the data loader
     trainLoader = train_loader(**vars(args))
     trainLoader = torch.utils.data.DataLoader(
         trainLoader,
@@ -273,7 +250,8 @@ def get_loader(args): # Define the data loader
     )
     return trainLoader
 
-def get_testloader(args): # Define the data loader
+
+def get_testloader(args):  # Define the data loader
     testLoader = test_loader(**vars(args))
     testLoader = torch.utils.data.DataLoader(
         testLoader,

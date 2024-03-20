@@ -1,3 +1,4 @@
+import pdb
 import sys, time, os, argparse, warnings, glob, torch
 from tools import *
 from model import *
@@ -7,6 +8,8 @@ from dataLoader import *
 parser = argparse.ArgumentParser(description = "Stage I, self-supervsied speaker recognition with contrastive learning.")
 parser.add_argument('--max_frames',        type=int,   default=180,          help='Input length to the network, 1.8s')
 parser.add_argument('--batch_size',        type=int,   default=300,          help='Batch size, bigger is better')
+parser.add_argument('--num_frames', type=int, default=140, help='Duration of the input segments, eg: 200 for 2 second')
+parser.add_argument('--sample_rate', type=int,  default=32000,   help='Set your sample_rate')
 parser.add_argument('--n_cpu',             type=int,   default=4,            help='Number of loader threads')
 parser.add_argument('--test_interval',     type=int,   default=1,            help='Test and save every [test_interval] epochs')
 parser.add_argument('--max_epoch',         type=int,   default=80,           help='Maximum number of epochs')
@@ -15,9 +18,9 @@ parser.add_argument("--lr_decay",          type=float, default=0.95,         hel
 parser.add_argument('--initial_model',     type=str,   default="",           help='Initial model path')
 parser.add_argument('--save_path',         type=str,   default="",           help='Path for model and scores.txt')
 parser.add_argument('--train_list',        type=str,   default="",           help='Path for Vox2 list, https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/train_list.txt')
-parser.add_argument('--val_list',          type=str,   default="",           help='Path for Vox_O list, https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/veri_test2.txt')
+parser.add_argument('--test_list',          type=str,   default="",           help='Path for Vox_O list, https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/veri_test2.txt')
 parser.add_argument('--train_path',        type=str,   default="",           help='Path to the Vox2 set')
-parser.add_argument('--val_path',          type=str,   default="",           help='Path to the Vox_O set')
+parser.add_argument('--test_path',          type=str,   default="",           help='Path to the Vox_O set')
 parser.add_argument('--musan_path',        type=str,   default="",           help='Path to the musan set')
 parser.add_argument('--eval',              dest='eval', action='store_true', help='Do evaluation only')
 args = parser.parse_args()
@@ -40,9 +43,11 @@ if(args.initial_model != ""): # If initial_model is exist, system will train fro
 elif len(modelfiles) >= 1: # Otherwise, system will try to start from the saved model&epoch
     Trainer.load_network(modelfiles[-1])
     it = int(os.path.splitext(os.path.basename(modelfiles[-1]))[0][5:]) + 1
-        
+
+testLoader = get_testloader(args)
+
 if args.eval == True: # Do evaluation only
-    EER, minDCF = Trainer.evaluate_network(**vars(args))
+    EER, minDCF = Trainer.evaluate_network(testLoader)
     print('EER %2.4f, minDCF %.3f\n'%(EER, minDCF))
     quit()
 
@@ -55,7 +60,7 @@ while it < args.max_epoch:
     # Evaluation every [test_interval] epochs, record the training loss, training acc, evaluation EER/minDCF
     if it % args.test_interval == 0:
         Trainer.save_network(model_save_path+"/model%09d.model"%it)
-        EER, minDCF = Trainer.evaluate_network(**vars(args))
+        EER, minDCF = Trainer.evaluate_network(testLoader)
         print(time.strftime("%Y-%m-%d %H:%M:%S"), "LR %f, Acc %2.2f, LOSS %f, EER %2.4f, minDCF %.3f"%( lr, traineer, loss, EER, minDCF))
         scorefile.write("Epoch %d, LR %f, Acc %2.2f, LOSS %f, EER %2.4f, minDCF %.3f\n"%(it, lr, traineer, loss, EER, minDCF))
         scorefile.flush()
