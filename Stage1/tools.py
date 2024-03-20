@@ -91,3 +91,16 @@ def accuracy(output, target, topk=(1,)):
         correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
+
+def accuracy_sup(res_label, label):
+    # 确定每个样本的预测类别，直接在GPU上进行
+    _, predicted_labels = torch.max(res_label.detach(), 1)
+
+    # 计算正确预测的样本数，同样在GPU上完成
+    correct_predictions = (predicted_labels == label.detach()).sum().item()
+
+    # 计算精度，计算过程在CPU上进行，因为最终结果是一个标量值
+    # 注意：.item()方法将tensor的值转换为Python数值，这个操作会自动将数据从GPU移动到CPU
+    accuracy = correct_predictions / label.size(0) * 100
+
+    return accuracy
