@@ -8,11 +8,12 @@ import numpy as np
 
 
 class train_loader(Dataset):
-    def __init__(self, max_frames, train_list, train_path, musan_path, num_frames, sample_rate, **kwargs):
+    def __init__(self, max_frames, train_list, train_path, musan_path, num_frames, sample_rate, audio_cross, **kwargs):
         self.max_frames = max_frames
         self.num_frames = num_frames
         self.sample_rate = sample_rate
         self.train_path = train_path
+        self.audio_cross = audio_cross
         self.noisetypes = ['noise', 'speech', 'music']  # Type of noise
         self.noisesnr = {'noise': [0, 15], 'speech': [13, 20], 'music': [5, 15]}  # The range of SNR
         self.noiselist = {}
@@ -41,10 +42,6 @@ class train_loader(Dataset):
         audio_1, sr = librosa.load(os.path.join(self.train_path, ls[1]), sr=self.sample_rate)
         audio_2, sr = librosa.load(os.path.join(self.train_path, ls[2]), sr=self.sample_rate)
 
-        # min_length = min(audio_1.shape[0], audio_2.shape[0])
-        # print('min_length:',min_length)
-        # audio_1 = audio_1[:min_length]
-        # audio_2 = audio_2[:min_length]
 
         audio_1 = numpy.stack([audio_1], axis=0).astype(np.float)  # TODO 这里的stack什么意思？
         audio_2 = numpy.stack([audio_2], axis=0).astype(np.float)
@@ -55,9 +52,34 @@ class train_loader(Dataset):
         while augtype1 == augtype2:
             augtype2 = random.randint(7, 11)
         audio_aug = []
-        audio_aug.append(self.random_aug(augtype1, audio_1, sr))
-        # audio_aug.append(self.random_aug(augtype1, audio, sr))
-        audio_aug.append(self.random_aug(augtype2, audio_2, sr))
+        audio_1 = self.random_aug(augtype1, audio_1, sr)
+        audio_2 = self.random_aug(augtype1, audio_2, sr)
+        audio_3 = self.random_aug(augtype2, audio_2, sr)
+
+        if self.audio_cross:
+            snr = [random.uniform(13, 20)]
+            p = random.random()
+            if p < 0.3:  # audio_1 only
+                a_1 = audio_cross(audio_1, audio_3, snr)
+                a_2 = audio_cross(audio_2, audio_3, snr)
+                a_3 = audio_3
+            elif p < 0.6:  # audio_2 only
+                a_3 = audio_cross(audio_3, audio_1, snr)
+                a_2 = audio_cross(audio_2, audio_1, snr)
+                a_1 = audio_1
+            else:  # Add both
+                a_1 = audio_cross(audio_1, audio_3, snr)
+                a_2 = audio_cross(audio_2, audio_3, snr)
+                a_3 = audio_cross(audio_3, audio_1, snr)
+        else:
+            a_1 = audio_1
+            a_2 = audio_2
+            a_3 = audio_3
+
+        audio_aug.append(a_1)
+        audio_aug.append(a_2)
+        audio_aug.append(a_3)
+
         audio_aug = numpy.concatenate(audio_aug, axis=0)  # Concate and return
         # return torch.FloatTensor(audio_aug), self.data_label[index]
         return torch.FloatTensor(audio_aug), self.data_label[index]
@@ -195,6 +217,14 @@ class test_loader(Dataset):
 
     def __len__(self):
         return len(self.data_list)
+
+def audio_cross(audio_1, audio_2, snr):
+    noise_db = 10 * numpy.log10(numpy.mean(audio_2 ** 2) + 1e-4)
+    clean_db = 10 * numpy.log10(numpy.mean(audio_1 ** 2) + 1e-4)
+    noise = numpy.sqrt(10 ** ((clean_db - noise_db - snr) / 10)) * audio_2
+    audio = audio_1 + noise
+
+    return audio
 
 
 def loadWAV(filename, max_frames):

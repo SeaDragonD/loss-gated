@@ -23,6 +23,7 @@ parser.add_argument('--train_path',        type=str,   default="",           hel
 parser.add_argument('--test_path',          type=str,   default="",           help='Path to the Vox_O set')
 parser.add_argument('--musan_path',        type=str,   default="",           help='Path to the musan set')
 parser.add_argument('--eval',              dest='eval', action='store_true', help='Do evaluation only')
+parser.add_argument('--audio_cross',       dest='eval', action='store_true', help='if audio_cross')
 args = parser.parse_args()
 
 # Initialization
