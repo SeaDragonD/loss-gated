@@ -21,6 +21,7 @@ parser.add_argument('--train_list',        type=str,   default="",           hel
 parser.add_argument('--test_list',          type=str,   default="",           help='Path for Vox_O list, https://www.robots.ox.ac.uk/~vgg/data/voxceleb/meta/veri_test2.txt')
 parser.add_argument('--train_path',        type=str,   default="",           help='Path to the Vox2 set')
 parser.add_argument('--test_path',          type=str,   default="",           help='Path to the Vox_O set')
+parser.add_argument('--val_path',          type=str,   default="",           help='Path to the Vox_O set')
 parser.add_argument('--musan_path',        type=str,   default="",           help='Path to the musan set')
 parser.add_argument('--eval',              dest='eval', action='store_true', help='Do evaluation only')
 parser.add_argument('--audio_cross',       dest='eval', action='store_true', help='if audio_cross')
@@ -45,11 +46,16 @@ elif len(modelfiles) >= 1: # Otherwise, system will try to start from the saved 
     Trainer.load_network(modelfiles[-1])
     it = int(os.path.splitext(os.path.basename(modelfiles[-1]))[0][5:]) + 1
 
+
 testLoader = get_testloader(args)
+args.test_path = args.val_path
+valLoader = get_testloader(args)
 
 if args.eval == True: # Do evaluation only
     EER, minDCF = Trainer.evaluate_network(testLoader)
-    print('EER %2.4f, minDCF %.3f\n'%(EER, minDCF))
+    print('[TEST] EER %2.4f, minDCF %.3f\n'%(EER, minDCF))
+    EER, minDCF = Trainer.evaluate_network(valLoader)
+    print('[VAL] EER %2.4f, minDCF %.3f\n' % (EER, minDCF))
     quit()
 
 trainLoader = get_loader(args) # Define the dataloader
@@ -62,8 +68,12 @@ while it < args.max_epoch:
     if it % args.test_interval == 0:
         Trainer.save_network(model_save_path+"/model%09d.model"%it)
         EER, minDCF = Trainer.evaluate_network(testLoader)
-        print(time.strftime("%Y-%m-%d %H:%M:%S"), "LR %f, Acc %2.2f, LOSS %f, EER %2.4f, minDCF %.3f"%( lr, traineer, loss, EER, minDCF))
-        scorefile.write("Epoch %d, LR %f, Acc %2.2f, LOSS %f, EER %2.4f, minDCF %.3f\n"%(it, lr, traineer, loss, EER, minDCF))
+        print(time.strftime("%Y-%m-%d %H:%M:%S"), "[TEST] LR %f, Acc %2.2f, LOSS %f, EER %2.4f, minDCF %.3f"%( lr, traineer, loss, EER, minDCF))
+        scorefile.write("[TEST] Epoch %d, LR %f, Acc %2.2f, LOSS %f, EER %2.4f, minDCF %.3f\n"%(it, lr, traineer, loss, EER, minDCF))
+        scorefile.flush()
+        EER, minDCF = Trainer.evaluate_network(valLoader)
+        print(time.strftime("%Y-%m-%d %H:%M:%S"),"[VAL] LR %f, Acc %2.2f, LOSS %f, EER %2.4f, minDCF %.3f" % (lr, traineer, loss, EER, minDCF))
+        scorefile.write("[VAL] Epoch %d, LR %f, Acc %2.2f, LOSS %f, EER %2.4f, minDCF %.3f\n" % (it, lr, traineer, loss, EER, minDCF))
         scorefile.flush()
     # Otherwise, recored the training loss and acc
     else:
